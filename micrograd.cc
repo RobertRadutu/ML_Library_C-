@@ -35,36 +35,54 @@ public:
         return std::shared_ptr<Value>(new Value(data, op, currentId++));
     }
 
-    static ValuePtr add(const ValuePtr& lhs, const ValuePtr& rhs){
-        auto out = Value::create(lhs->data + rhs->data, "+");
-        out->prev = {lhs, rhs};
-        out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
-            lhs_weak.lock()->grad += out_weak.lock()->grad;
-            rhs_weak.lock()->grad += out_weak.lock()->grad;
+    static ValuePtr add(const std::vector<ValuePtr>& operands){
+        float result = 0;
+        for(auto it : operands){
+            result+= it->data;
+        }
+        auto out = Value::create(result, "+");
+        for(auto it : operands) out->prev.push_back(it); 
+        out->backward = [out_weak = std::weak_ptr<Value>(out), operands](){
+            for(auto it : operands){
+                std::weak_ptr aux = std::weak_ptr<Value>(it);
+                aux.lock()->grad += out_weak.lock()->grad;
+            }
         };
         return out;
     }
     
-    static ValuePtr subtract(const ValuePtr& lhs, const ValuePtr& rhs){
-        auto out = Value::create(lhs->data - rhs->data, "-");
-        out->prev = {lhs, rhs};
-        out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
-            lhs_weak.lock()->grad += out_weak.lock()->grad;
-            rhs_weak.lock()->grad += out_weak.lock()->grad; 
+    static ValuePtr subtract(const std::vector<ValuePtr>& operands){
+        auto it = operands.begin();
+        float result = (*it)->data;
+        for(it = operands.begin()+1; it != operands.end(); it++){
+            result -= (*it)->data;
+        }
+        auto out = Value::create(result, "-");
+        for(auto it : operands) out->prev.push_back(it); 
+        out->backward = [out_weak = std::weak_ptr<Value>(out), operands](){
+            for(auto it : operands){
+                std::weak_ptr aux = std::weak_ptr<Value>(it);
+                aux.lock()->grad += out_weak.lock()->grad;
+            }
         };
         return out;
     }
 
-    static ValuePtr multiply(const ValuePtr& lhs, const ValuePtr& rhs){
-        auto out = Value::create(lhs->data * rhs->data, "*");
-        out->prev = {lhs, rhs};
-        out->backward = [lhs_weak = std::weak_ptr<Value>(lhs), rhs_weak = std::weak_ptr<Value>(rhs), out_weak = std::weak_ptr<Value>(out)](){
-            lhs_weak.lock()->grad += out_weak.lock()->grad * rhs_weak.lock()->data;
-            rhs_weak.lock()->grad += out_weak.lock()->grad * lhs_weak.lock()->data;
+    static ValuePtr multiply(const std::vector<ValuePtr>& operands){
+        float result = 1;
+        for(auto it : operands){
+            result *= it->data;
+        }
+        auto out = Value::create(result, "*");
+        for(auto it : operands) out->prev.push_back(it); 
+        out->backward = [out_weak = std::weak_ptr<Value>(out), operands, result](){
+            for(auto it : operands){
+                std::weak_ptr aux = std::weak_ptr<Value>(it);
+                aux.lock()->grad += out_weak.lock()->grad * (result / it->data);
+            }
         };
-
         return out;
-    }
+      }
 
     void buildTopological(const ValuePtr& curr, std::unordered_set<ValuePtr, Hash>& visited, std::vector<std::shared_ptr<Value>>& topo){
         visited.insert(curr);
@@ -81,16 +99,27 @@ public:
         std::cout << "Size: " << topo.size() << std::endl;
         this->grad = 1.0f;
         for(auto it = topo.begin(); it != topo.end(); it++){
-            std::cout << (*it)->data << std::endl;
+           // std::cout << (*it)->data << std::endl;
             if((*it)->backward)
                 (*it)->backward();
         }
     }
-
+    
+    static ValuePtr ReLU(const ValuePtr& x){
+       auto out = Value::create(std::max(0.0f, x->data), "ReLU");
+       out->prev.push_back(x);
+       out->backward = [x_weak = std::weak_ptr<Value>(x), out_weak = std::weak_ptr<Value>(out)](){
+            x_weak.lock()->grad += (out_weak.lock()->data > 0) * out_weak.lock()->grad;
+       };
+       return out;
+    }
+    
     ~Value(){
         --currentId;
     }
 };
+
+
 
 size_t Hash::operator()(const ValuePtr value) const{
     return std::hash<std::string>()(value->op) ^ std::hash<float>()(value->data);
@@ -98,15 +127,25 @@ size_t Hash::operator()(const ValuePtr value) const{
     
 
 int main(){
-    auto a = Value::create(1.0, "");
-    auto b = Value::create(2.0, "");
-    auto c = Value::add(a, b);
-    auto d = Value::create(4.0, "");
-    auto L = Value::multiply(c, d);
+    auto a = Value::create(3.0, "");
+    auto b = Value::create(7.0, "");
+    auto c = Value::create(10.0, "");
+    auto d = Value::add({a, b, c});
+    auto e = Value::create(5.0, "");
+    auto f = Value::create(1.0, "");
+    auto g = Value::multiply({d, e, f});
+    auto L = Value::ReLU(g);
+    
     L->backProp();
+ /* 
+    std::cout << "Value of L is : " << L->data << std::endl;
+
     std::cout << "The gradient of L with respect to a is : " << a->grad << std::endl;
     std::cout << "The gradient of L with respect to b is : " << b->grad << std::endl;
     std::cout << "The gradient of L with respect to c is : " << c->grad << std::endl;
     std::cout << "The gradient of L with respect to d is : " << d->grad << std::endl;
     std::cout << "The gradient of L with respect to L is : " << L->grad << std::endl;
+    std::cout << "Number of nodes in the graph: " << Value::currentId << std::endl;
+*/
+    std::cout << b->grad << std::endl;
 }
